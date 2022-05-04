@@ -1,0 +1,125 @@
+---
+title: "Homework4"
+author: "Thomas Shi"
+date: "2022/5/1"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(corrr)
+library(discrim)
+library(klaR)
+library(MASS)
+library(dplyr)
+library(poissonreg)
+library(pROC)
+tidymodels_prefer()
+```
+
+1
+```{r, echo = T}
+titanic <- read.csv('titanic.csv')
+titanic %>% head()
+titanic$survived <- as.factor(titanic$survived)
+titanic$pclass <- as.factor(titanic$pclass)
+titanic <- tibble(titanic)
+set.seed(3435)
+titanic_split <- initial_split(titanic, prop = 0.75,
+                                strata = survived)
+titanic_train <- training(titanic_split)
+titanic_test <- testing(titanic_split)
+titanic_train %>% head()
+dim(titanic_train)
+dim(titanic_test)
+```
+The proportion of training data is 0.75 and the proportion of testing data is 0.25. I choose this combination because training 
+data will have 668 individuals which will be enough for building a model. The size of testing set will be 223 which 
+will be enough for testing the validty of our model to prevent overfitting.
+
+2
+```{r, echo = T}
+titanic_train2 <- titanic_train %>% dplyr::select(survived, pclass, sex, age, sib_sp, parch, fare)
+set.seed(13)
+titanic_folds <- vfold_cv(titanic_train2, v = 10)
+```
+
+
+3 In your own words, explain what we are doing in Question 2. What is k-fold cross-validation? Why should we use it, rather than simply fitting and testing models on the entire training set? If we did use the entire training set, what resampling method would that be?
+
+
+Randomly divide the data into k groups of roughly equal size. We hold out one of the fold as validation set and rest of the data to fit model. We compute MSE on the observations in the held-out fold. Then we repeat these steps k times. Then we calculate the average MSE. We use k-fold cross-validation because we want to select the best model without overfitting. We have limited sample sizes, so by doing k-fold cross validation, we can improve the generality of our model fitting. Moreover, mse will be consistent across all the folds.It will be the initial split validation set approach. 
+
+
+4
+```{r, echo = T}
+titanic_recipe <- recipe(survived ~ ., data = titanic_train2) %>%
+  step_impute_linear(age)
+titanic_recipe <- titanic_recipe %>% step_dummy(sex)
+titanic_recipe <- titanic_recipe %>%
+  step_interact(terms = ~ starts_with('sex') : fare)
+titanic_recipe <- titanic_recipe %>%
+  step_interact(terms = ~ age : fare)
+
+titanic_recipe
+
+log_reg <- logistic_reg() %>% 
+  set_engine("glm") %>% 
+  set_mode("classification")
+
+lda_mod <- discrim_linear() %>% 
+  set_mode("classification") %>% 
+  set_engine("MASS")
+
+qda_mod <- discrim_quad() %>% 
+  set_mode("classification") %>% 
+  set_engine("MASS")
+
+
+```
+
+There are ten folds and three models, so 30 models will be fitted.
+
+
+5
+```{r, echo = T}
+log_res <- fit_resamples(log_reg, titanic_recipe, titanic_folds)
+lda_res <- fit_resamples(lda_mod, titanic_recipe, titanic_folds)
+qda_res <- fit_resamples(qda_mod, titanic_recipe, titanic_folds)
+```
+
+
+
+6
+```{r, echo = T}
+collect_metrics(log_res)
+collect_metrics(lda_res)
+collect_metrics(qda_res)
+```
+
+
+I will choose the logistic model. First both the accuracy and standard error of logistic model is higher than the accuracy and standard error of QDA. Thus, I will not consider the QDA model. Second, the accuracy of logistic model is higher than the accuracy of LDA model. Although LDA model has smaller standard error, the difference between standard error of logistic model and standard error of LDA model is less than 0.001 which is a trivial difference. Therefore, I will choose the logistic model. Moreover, the differences betwen AUC is less than 0.001 as well.
+
+
+7
+```{r, echo = T}
+log_wkflow <- workflow() %>% 
+  add_model(log_reg) %>% 
+  add_recipe(titanic_recipe)
+
+log_fit <- fit(log_wkflow, titanic_train2)
+log_fit
+```
+
+
+8
+```{r, echo = T}
+titanic_test2 <- titanic_test %>% dplyr::select(survived, pclass, sex, age, sib_sp, parch, fare)
+predict(log_fit, new_data = titanic_test2, type = "class")
+predict(log_fit, new_data = titanic_test, type = "class") %>% 
+  bind_cols(titanic_test %>% select(survived)) %>% 
+  accuracy(truth = survived, estimate = .pred_class)
+```
+
+The testing accuracy is slightly lower than the average accuracy across folds. It is a normal situation. 
